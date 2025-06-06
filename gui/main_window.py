@@ -15,7 +15,7 @@ class CVAnalyzerApp:
         ctk.set_default_color_theme("blue")
         
         self.root = ctk.CTk()
-        self.root.title("CV Regex Extractor")
+        self.root.title("LinkedOut")
         self.root.geometry("1000x700")
         self.root.minsize(1000, 700)
         
