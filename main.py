@@ -1,12 +1,3 @@
-#!/usr/bin/env python3
-"""
-CV Analyzer Desktop Application
-A modern SaaS-like desktop application for analyzing CV/Resume PDFs using regex extraction.
-
-Author: Your Name
-Version: 1.0.0
-"""
-
 import sys
 import os
 from gui.main_window import CVAnalyzerApp
