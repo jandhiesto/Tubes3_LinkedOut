@@ -11,7 +11,9 @@ build/
 # Virtual environment
 venv/
 env/
-.env/
+
+# Environment file
+.env
 
 # IDE specific files
 .vscode/

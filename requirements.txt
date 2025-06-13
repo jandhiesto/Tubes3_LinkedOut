@@ -5,4 +5,5 @@ tkinter-tooltip==2.1.0
 setuptools>=65.5.1
 wheel>=0.38.4
 numpy>=1.21.0
+mysql-connector-python==9.3.0
 --only-binary :all: 
