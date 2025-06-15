@@ -1,1 +1,3 @@
-# GUI Package for CV Analyzer 
+"""
+GUI package for CV Analyzer.
+""" 
