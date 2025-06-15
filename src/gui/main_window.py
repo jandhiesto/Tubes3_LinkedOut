@@ -4,16 +4,25 @@ import customtkinter as ctk
 import os
 import sys
 import threading
-from typing import Dict, List
+import time
+from typing import Dict, List, Tuple
+from dotenv import load_dotenv
+import subprocess
+from database_connector.query_service import QueryService
+from pattern.kmp import kmp_search
+from pattern.bm import boyer_moore_search
+from pattern.fuzzy import fuzzy_search_all
 
 # Add parent directory to path to import from other folders
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from extract.cv_extractor import CVExtractor
 from extract.regex import parse_cv_sections
+from gui.summary_window import SummaryWindow
 
 class CVAnalyzerApp:
     def __init__(self):
+        load_dotenv()
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         
@@ -22,9 +31,11 @@ class CVAnalyzerApp:
         self.root.geometry("1400x800")
         self.root.minsize(1200, 700)
         
-        # Initialize class properties
+        self.query_service = QueryService()
         self.current_file_paths: List[str] = []
         self.analysis_results: Dict[str, dict] = {}
+        self.applicant_data: Dict[str, dict] = {}
+        self.search_algorithm = "KMP"  # Default to KMP
         
         self.setup_ui()
         
@@ -49,69 +60,115 @@ class CVAnalyzerApp:
         search_frame.pack(fill="x", pady=(0, 25))
         search_row = ctk.CTkFrame(search_frame, fg_color="transparent")
         search_row.pack(pady=30)
-        self.search_entry = ctk.CTkEntry(search_row, placeholder_text="Enter keywords (e.g., React, Tailwind, HTML)", font=ctk.CTkFont(size=14, family="Helvetica"), height=40, width=400)
+        
+        # Search input
+        self.search_entry = ctk.CTkEntry(
+            search_row, 
+            placeholder_text="Enter keywords (e.g., React, Tailwind, HTML)", 
+            font=ctk.CTkFont(size=14, family="Helvetica"), 
+            height=40, 
+            width=400
+        )
         self.search_entry.pack(side="left", padx=(0, 10))
-        self.search_btn = ctk.CTkButton(search_row, text="Search", font=ctk.CTkFont(size=14, weight="bold", family="Helvetica"), height=40, width=100, fg_color="#4A90E2", hover_color="#357ABD", command=self.search_keywords)
+        
+        # Number of matches input
+        self.matches_entry = ctk.CTkEntry(
+            search_row,
+            placeholder_text="Number of matches",
+            font=ctk.CTkFont(size=14, family="Helvetica"),
+            height=40,
+            width=150
+        )
+        self.matches_entry.pack(side="left", padx=(0, 10))
+        self.matches_entry.insert(0, "5")  # Default value
+        
+        # Algorithm selection
+        self.algorithm_var = ctk.StringVar(value="KMP")
+        algorithm_frame = ctk.CTkFrame(search_row, fg_color="transparent")
+        algorithm_frame.pack(side="left", padx=(0, 10))
+        
+        ctk.CTkLabel(
+            algorithm_frame,
+            text="Algorithm:",
+            font=ctk.CTkFont(size=14, family="Helvetica")
+        ).pack(side="left", padx=(0, 5))
+        
+        # Replace radio buttons with segmented button
+        self.algorithm_selector = ctk.CTkSegmentedButton(
+            algorithm_frame,
+            values=["KMP", "BM"],
+            variable=self.algorithm_var,
+            font=ctk.CTkFont(size=14, family="Helvetica"),
+            height=35,
+            width=200,
+            fg_color="#2B2B2B",
+            selected_color="#4A90E2",
+            selected_hover_color="#357ABD",
+            unselected_color="#1A1A1A",
+            unselected_hover_color="#2B2B2B",
+            command=self.update_algorithm_label
+        )
+        self.algorithm_selector.pack(side="left", padx=(0, 10))
+        
+        # Add label to show current algorithm
+        self.algorithm_label = ctk.CTkLabel(
+            algorithm_frame,
+            text="(Knuth-Morris-Pratt)",
+            font=ctk.CTkFont(size=12, family="Helvetica"),
+            text_color="#A0A0A0"
+        )
+        self.algorithm_label.pack(side="left")
+        
+        # Search button
+        self.search_btn = ctk.CTkButton(
+            search_row, 
+            text="Search", 
+            font=ctk.CTkFont(size=14, weight="bold", family="Helvetica"), 
+            height=40, 
+            width=100, 
+            fg_color="#4A90E2", 
+            hover_color="#357ABD", 
+            command=self.search_keywords
+        )
         self.search_btn.pack(side="left", padx=(0, 20))
         
         # Upload section
         upload_frame = ctk.CTkFrame(main_frame, corner_radius=20, fg_color=("#2B2B2B", "#1A1A1A"))
         upload_frame.pack(fill="x", pady=(0, 25))
-        self.upload_btn = ctk.CTkButton(upload_frame, text="Upload CVs (PDF)", font=ctk.CTkFont(size=16, weight="bold", family="Helvetica"), height=50, corner_radius=25, fg_color="#4A90E2", hover_color="#357ABD", command=self.upload_files)
+        self.upload_btn = ctk.CTkButton(
+            upload_frame, 
+            text="Upload CVs (PDF)", 
+            font=ctk.CTkFont(size=16, weight="bold", family="Helvetica"), 
+            height=50, 
+            corner_radius=25, 
+            fg_color="#4A90E2", 
+            hover_color="#357ABD", 
+            command=self.upload_files
+        )
         self.upload_btn.pack(pady=20)
-        self.file_info_label = ctk.CTkLabel(upload_frame, text="No files selected", font=ctk.CTkFont(size=12, family="Helvetica"), text_color="#A0A0A0")
+        self.file_info_label = ctk.CTkLabel(
+            upload_frame, 
+            text="No files selected", 
+            font=ctk.CTkFont(size=12, family="Helvetica"), 
+            text_color="#A0A0A0"
+        )
         self.file_info_label.pack(pady=(0, 20))
         
-        # Results section with columns
-        results_container = ctk.CTkFrame(main_frame, corner_radius=20, fg_color=("#2B2B2B", "#1A1A1A"))
-        results_container.pack(fill="both", expand=True)
-
-        # Left column (File List and Top Matches)
-        left_column = ctk.CTkFrame(results_container, fg_color="transparent", width=200)
-        left_column.pack(side="left", fill="y", padx=(20, 10), pady=20)
+        # Results section
+        self.results_frame = ctk.CTkFrame(main_frame, corner_radius=20, fg_color=("#2B2B2B", "#1A1A1A"))
+        self.results_frame.pack(fill="both", expand=True)
         
-        # File List
-        ctk.CTkLabel(left_column, text="Uploaded CVs", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(0, 10))
-        self.file_listbox = ctk.CTkTextbox(left_column, wrap="word", font=ctk.CTkFont(size=12, family="Helvetica"), width=180, height=200)
-        self.file_listbox.pack(fill="x", expand=False)
-        self.file_listbox.bind("<<TextSelect>>", self.on_file_select)
-        
-        # Top Matches
-        ctk.CTkLabel(left_column, text="Top Matches", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(20, 10))
-        self.top_matches_textbox = ctk.CTkTextbox(left_column, wrap="word", font=ctk.CTkFont(size=12, family="Helvetica"), width=180)
-        self.top_matches_textbox.pack(fill="both", expand=True)
-        self.top_matches_textbox.bind("<<TextSelect>>", self.on_match_select)
-
-        # Right columns (CV Information)
-        right_columns = ctk.CTkFrame(results_container, fg_color="transparent")
-        right_columns.pack(side="right", fill="both", expand=True, padx=(10, 20), pady=20)
-        
-        # Create columns for different sections
-        columns = [
-            ("Summary", "summary"),
-            ("Skills", "skills"),
-            ("Experience", "experience"),
-            ("Education", "education")
-        ]
-        
-        self.info_textboxes = {}
-        for title, key in columns:
-            column_frame = ctk.CTkFrame(right_columns, fg_color="transparent")
-            column_frame.pack(side="left", fill="both", expand=True, padx=5)
-            
-            ctk.CTkLabel(column_frame, text=title, font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(0, 10))
-            textbox = ctk.CTkTextbox(column_frame, wrap="word", font=ctk.CTkFont(size=12, family="Helvetica"))
-            textbox.pack(fill="both", expand=True)
-            self.info_textboxes[key] = textbox
-        
+        # Initial message
         self.show_initial_message()
         
     def show_initial_message(self):
-        for textbox in self.info_textboxes.values():
-            textbox.configure(state="normal")
-            textbox.delete("1.0", "end")
-            textbox.insert("1.0", "Upload CVs to see the extracted information.")
-            textbox.configure(state="disabled")
+        message_label = ctk.CTkLabel(
+            self.results_frame,
+            text="Upload CVs and search for matches to see results",
+            font=ctk.CTkFont(size=16),
+            text_color="#A0A0A0"
+        )
+        message_label.place(relx=0.5, rely=0.5, anchor="center")
         
     def upload_files(self):
         file_paths = filedialog.askopenfilenames(title="Select CV PDF Files", filetypes=[("PDF files", "*.pdf")])
@@ -119,13 +176,6 @@ class CVAnalyzerApp:
             self.current_file_paths = list(file_paths)
             self.file_info_label.configure(text=f"Selected: {len(file_paths)} files")
             self.upload_btn.configure(text="Analyzing...", state="disabled", fg_color="#666666")
-            
-            # Update file list
-            self.file_listbox.configure(state="normal")
-            self.file_listbox.delete("1.0", "end")
-            for path in file_paths:
-                self.file_listbox.insert("end", f"{os.path.basename(path)}\n")
-            self.file_listbox.configure(state="disabled")
             
             # Start analysis in background
             threading.Thread(target=self.analyze_cvs, daemon=True).start()
@@ -154,6 +204,34 @@ class CVAnalyzerApp:
                     'text': raw_text  # Keep raw text for keyword search
                 }
                 self.analysis_results[file_path] = results
+                
+                # Get applicant data from database
+                try:
+                    applicant_data = self.query_service.get_applicant_by_cv_path(file_path)
+                    if applicant_data:
+                        self.applicant_data[file_path] = applicant_data
+                    else:
+                        # If no applicant found, use default values
+                        self.applicant_data[file_path] = {
+                            'first_name': 'Unknown',
+                            'last_name': 'Unknown',
+                            'date_of_birth': 'Unknown',
+                            'address': 'Unknown',
+                            'phone_number': 'Unknown',
+                            'cv_path': file_path
+                        }
+                except Exception as e:
+                    print(f"Error getting applicant data: {str(e)}")
+                    # Use default values on error
+                    self.applicant_data[file_path] = {
+                        'first_name': 'Unknown',
+                        'last_name': 'Unknown',
+                        'date_of_birth': 'Unknown',
+                        'address': 'Unknown',
+                        'phone_number': 'Unknown',
+                        'cv_path': file_path
+                    }
+                
                 self.root.after(0, self.update_file_status, file_path, "✓")
         except Exception as e:
             print(f"Error in analyze_cvs: {str(e)}")
@@ -163,16 +241,7 @@ class CVAnalyzerApp:
     
     def update_file_status(self, file_path: str, status: str):
         """Update the status of a file in the list"""
-        self.file_listbox.configure(state="normal")
-        content = self.file_listbox.get("1.0", "end")
-        lines = content.split("\n")
-        for i, line in enumerate(lines):
-            if os.path.basename(file_path) in line:
-                lines[i] = f"{os.path.basename(file_path)} {status}"
-                break
-        self.file_listbox.delete("1.0", "end")
-        self.file_listbox.insert("1.0", "\n".join(lines))
-        self.file_listbox.configure(state="disabled")
+        self.file_info_label.configure(text=f"Processed: {len(self.analysis_results)}/{len(self.current_file_paths)} files")
     
     def reset_upload_button(self):
         self.upload_btn.configure(text="Upload CVs (PDF)", state="normal", fg_color="#4A90E2")
@@ -180,42 +249,66 @@ class CVAnalyzerApp:
     def show_error(self, error_message):
         messagebox.showerror("Analysis Error", f"An error occurred: {error_message}")
     
-    def on_file_select(self, event):
-        """Handle file selection from the list"""
-        try:
-            # Get selected text
-            selected_text = self.file_listbox.get("sel.first", "sel.last")
-            selected_file = selected_text.strip().split(" ")[0]  # Remove status if present
+    def calculate_match_score(self, text: str, keywords: List[str]) -> Tuple[float, float, float]:
+        """Calculate match score using selected pattern matching algorithm and fuzzy matching
+        Returns: (total_score, exact_time, fuzzy_time)"""
+        text = text.lower()
+        total_score = 0
+        exact_matches = set()  # Track which keywords had exact matches
+        
+        # Get selected algorithm
+        selected_algo = self.algorithm_var.get()
+        print(f"Using algorithm: {selected_algo}")
+        
+        # Measure exact matching time
+        exact_start_time = time.time()
+        
+        # First try exact matching
+        for keyword in keywords:
+            keyword = keyword.lower()
+            # Use selected algorithm for pattern matching
+            if selected_algo == "KMP":
+                matches = kmp_search(text, keyword)
+            else:  # Boyer-Moore
+                matches = boyer_moore_search(text, keyword)
             
-            # Find the full path
-            for path in self.current_file_paths:
-                if os.path.basename(path) == selected_file:
-                    self.display_results(self.analysis_results[path])
-                    break
-        except:
-            pass  # Ignore if no text is selected
-    
-    def on_match_select(self, event):
-        """Handle selection from top matches"""
-        try:
-            # Get selected text
-            selected_text = self.top_matches_textbox.get("sel.first", "sel.last")
-            selected_file = selected_text.strip().split(" - ")[0]  # Get filename before match count
-            
-            # Find the full path and display results
-            for path in self.current_file_paths:
-                if os.path.basename(path) == selected_file:
-                    self.display_results(self.analysis_results[path])
-                    break
-        except:
-            pass  # Ignore if no text is selected
-    
-    def display_results(self, results):
-        for key in self.info_textboxes:
-            self.info_textboxes[key].configure(state="normal")
-            self.info_textboxes[key].delete("1.0", "end")
-            self.info_textboxes[key].insert("1.0", results.get(key, 'N/A'))
-            self.info_textboxes[key].configure(state="disabled")
+            if matches:  # If exact matches found
+                exact_matches.add(keyword)
+                print(f"Found {len(matches)} matches for '{keyword}' using {selected_algo}")
+                # Calculate score based on number of matches and context
+                for match_pos in matches:
+                    # Get context around the match
+                    context_start = max(0, match_pos - 50)
+                    context_end = min(len(text), match_pos + len(keyword) + 50)
+                    context = text[context_start:context_end]
+                    
+                    # Calculate score based on context length
+                    score = 1.0 / (1.0 + len(context))
+                    total_score += score
+        
+        exact_time = time.time() - exact_start_time
+        
+        # Measure fuzzy matching time
+        fuzzy_time = 0
+        unmatched_keywords = [k for k in keywords if k not in exact_matches]
+        if unmatched_keywords:
+            print(f"Trying fuzzy matching for: {unmatched_keywords}")
+            fuzzy_start_time = time.time()
+            fuzzy_results = fuzzy_search_all(text, unmatched_keywords, threshold=0.8)
+            for keyword, matches in fuzzy_results.items():
+                for match_pos, similarity in matches:
+                    # Get context around the match
+                    context_start = max(0, match_pos - 50)
+                    context_end = min(len(text), match_pos + len(keyword) + 50)
+                    context = text[context_start:context_end]
+                    
+                    # Calculate score based on context length and similarity
+                    # Use similarity score directly from fuzzy search
+                    score = (similarity * 0.5) / (1.0 + len(context))  # Reduce weight of fuzzy matches
+                    total_score += score
+            fuzzy_time = time.time() - fuzzy_start_time
+        
+        return total_score, exact_time, fuzzy_time
 
     def search_keywords(self):
         if not self.current_file_paths:
@@ -227,51 +320,171 @@ class CVAnalyzerApp:
             messagebox.showwarning("Warning", "Please enter keywords to search.")
             return
             
+        try:
+            num_matches = int(self.matches_entry.get())
+            if num_matches <= 0:
+                raise ValueError("Number of matches must be positive")
+        except ValueError:
+            messagebox.showwarning("Warning", "Please enter a valid number of matches.")
+            return
+            
         keywords = [k.strip() for k in keywords_input.split(',') if k.strip()]
         
-        # Store match counts for each file
-        file_matches = []
+        # Calculate match scores for each file
+        file_scores = []
+        total_exact_time = 0
+        total_fuzzy_time = 0
         
-        # Search in all analyzed files
         for file_path in self.current_file_paths:
             if file_path in self.analysis_results:
                 results = self.analysis_results[file_path]
                 if 'text' in results:
-                    text = results['text'].lower()  # Convert to lowercase once
-                    total_matches = 0
-                    for keyword in keywords:
-                        # Use case-insensitive search
-                        matches = text.count(keyword.lower())
-                        total_matches += matches
-                    
-                    if total_matches > 0:
-                        file_matches.append((os.path.basename(file_path), total_matches, file_path))
+                    score, exact_time, fuzzy_time = self.calculate_match_score(results['text'], keywords)
+                    total_exact_time += exact_time
+                    total_fuzzy_time += fuzzy_time
+                    if score > 0:
+                        file_scores.append((file_path, score))
         
-        # Sort files by match count (descending)
-        file_matches.sort(key=lambda x: x[1], reverse=True)
+        # Sort by score and take top matches
+        file_scores.sort(key=lambda x: x[1], reverse=True)
+        top_matches = file_scores[:num_matches]
         
-        # Update top matches display
-        self.top_matches_textbox.configure(state="normal")
-        self.top_matches_textbox.delete("1.0", "end")
+        # Clear previous results
+        for widget in self.results_frame.winfo_children():
+            widget.destroy()
         
-        if file_matches:
-            self.top_matches_textbox.insert("1.0", "Top Matching CVs:\n\n")
-            for filename, count, _ in file_matches:
-                self.top_matches_textbox.insert("end", f"{filename} - {count} matches\n")
+        if top_matches:
+            # Create scrollable frame for cards
+            cards_frame = ctk.CTkScrollableFrame(self.results_frame, fg_color="transparent")
+            cards_frame.pack(fill="both", expand=True, padx=20, pady=20)
             
-            # Display the first matching file's information
-            first_match_path = file_matches[0][2]
-            self.display_results(self.analysis_results[first_match_path])
+            # Add timing information
+            timing_frame = ctk.CTkFrame(cards_frame, fg_color="transparent")
+            timing_frame.pack(fill="x", pady=(0, 10))
+            
+            # Exact matching time
+            exact_time_label = ctk.CTkLabel(
+                timing_frame,
+                text=f"Exact Matching Time ({self.algorithm_var.get()}): {total_exact_time:.3f} seconds",
+                font=ctk.CTkFont(size=12, family="Helvetica"),
+                text_color="#4A90E2"
+            )
+            exact_time_label.pack(side="left", padx=(0, 20))
+            
+            # Fuzzy matching time
+            if total_fuzzy_time > 0:
+                fuzzy_time_label = ctk.CTkLabel(
+                    timing_frame,
+                    text=f"Fuzzy Matching Time: {total_fuzzy_time:.3f} seconds",
+                    font=ctk.CTkFont(size=12, family="Helvetica"),
+                    text_color="#4A90E2"
+                )
+                fuzzy_time_label.pack(side="left")
+            
+            # Create cards for each match
+            for file_path, score in top_matches:
+                card = self.create_match_card(cards_frame, file_path, score)
+                card.pack(fill="x", pady=10)
         else:
-            self.top_matches_textbox.insert("1.0", "No matches found.")
-            # Clear all columns
-            for textbox in self.info_textboxes.values():
-                textbox.configure(state="normal")
-                textbox.delete("1.0", "end")
-                textbox.insert("1.0", "No matches found.")
-                textbox.configure(state="disabled")
+            # Show no matches message
+            message_label = ctk.CTkLabel(
+                self.results_frame,
+                text="No matches found",
+                font=ctk.CTkFont(size=16),
+                text_color="#A0A0A0"
+            )
+            message_label.place(relx=0.5, rely=0.5, anchor="center")
+    
+    def create_match_card(self, parent, file_path: str, score: float) -> ctk.CTkFrame:
+        """Create a card for displaying a match"""
+        card = ctk.CTkFrame(parent, corner_radius=10, fg_color=("#2B2B2B", "#1A1A1A"))
         
-        self.top_matches_textbox.configure(state="disabled")
+        # Get applicant data
+        applicant_data = self.applicant_data.get(file_path, {})
+        name = f"{applicant_data.get('first_name', 'Unknown')} {applicant_data.get('last_name', 'Unknown')}"
+        
+        # Card content
+        content_frame = ctk.CTkFrame(card, fg_color="transparent")
+        content_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Name and score
+        header_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
+        header_frame.pack(fill="x", pady=(0, 10))
+        
+        name_label = ctk.CTkLabel(
+            header_frame,
+            text=name,
+            font=ctk.CTkFont(size=18, weight="bold")
+        )
+        name_label.pack(side="left")
+        
+        score_label = ctk.CTkLabel(
+            header_frame,
+            text=f"Match Score: {score:.2f}",
+            font=ctk.CTkFont(size=14),
+            text_color="#4A90E2"
+        )
+        score_label.pack(side="right")
+        
+        # Buttons
+        buttons_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
+        buttons_frame.pack(fill="x", pady=(10, 0))
+        
+        view_summary_btn = ctk.CTkButton(
+            buttons_frame,
+            text="View Summary",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=35,
+            width=120,
+            fg_color="#4A90E2",
+            hover_color="#357ABD",
+            command=lambda: self.show_summary(file_path)
+        )
+        view_summary_btn.pack(side="left", padx=(0, 10))
+        
+        view_cv_btn = ctk.CTkButton(
+            buttons_frame,
+            text="View CV",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=35,
+            width=120,
+            fg_color="#2B2B2B",
+            hover_color="#1A1A1A",
+            command=lambda: self.open_cv(file_path)
+        )
+        view_cv_btn.pack(side="left")
+        
+        return card
+    
+    def show_summary(self, file_path: str):
+        """Show summary window for a CV"""
+        if file_path in self.analysis_results and file_path in self.applicant_data:
+            SummaryWindow(
+                self.root,
+                self.analysis_results[file_path],
+                self.applicant_data[file_path],
+                file_path
+            )
+    
+    def open_cv(self, file_path: str):
+        """Open CV file"""
+        try:
+            if os.path.exists(file_path):
+                if os.name == 'nt':  # Windows
+                    os.startfile(file_path)
+                else:  # Linux/Mac
+                    subprocess.run(['xdg-open', file_path])
+            else:
+                messagebox.showerror("Error", "CV file not found")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open CV: {str(e)}")
+
+    def update_algorithm_label(self, value):
+        """Update the algorithm description label"""
+        if value == "KMP":
+            self.algorithm_label.configure(text="(Knuth-Morris-Pratt)")
+        else:
+            self.algorithm_label.configure(text="(Boyer-Moore)")
 
     def run(self):
         self.root.mainloop()
