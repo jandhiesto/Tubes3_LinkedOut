@@ -72,21 +72,8 @@ class CVExtractor:
                 'text': text,
                 'summary': summary,
                 'skills': skills,
-                'work_experience': [
-                    f"Date Range: {job['date_range']}\n"
-                    f"Company: {job['company']}\n"
-                    f"Location: {job['city']}, {job['state']}\n"
-                    f"Position: {job['position']}\n"
-                    f"Description:\n{job['description']}\n"
-                    f"{'='*50}\n"
-                    for job in work_exp
-                ],
-                'education': [
-                    f"Year: {edu['year']}\n"
-                    f"Degree: {edu['degree']}\n"
-                    f"Institution: {edu['institution']}"
-                    for edu in education
-                ]
+                'work_experience': work_exp,
+                'education': education
             }
             return result
         except Exception as e:

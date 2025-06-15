@@ -8,7 +8,7 @@ patterns = {
     'skills': r'(?is)(?:Skills|Highlights|Technical\s*Skills|Core\s*Competencies)\s*(.*?)(?=\s*(?:Summary|Experience|Education|Work|Employment|Accomplishments|\Z))',
 
     # Experience: Menangkap semua bagian pengalaman kerja dengan berbagai variasi header
-    'experience': r'(?is)(?:Experience|Work\s*Experience|Employment|Professional\s*Experience)\s*(.*?)(?=\s*Education|\Z)',
+    'experience': r'(?is)Experience\s*(.*?)(?=\s*Education|\Z)',
 
     # Job Details: Lebih toleran terhadap spasi, newline, dan karakter aneh
     'job_details': r'(?is)'
@@ -76,6 +76,18 @@ def extract_with_regex(text: str, pattern: str) -> list:
         print("\nSearching in text:")
         print(text[:500] + "...")
         
+        # For summary and skills, try to find the section first
+        if pattern in [patterns['summary'], patterns['skills']]:
+            section_name = "Summary" if pattern == patterns['summary'] else "Skills"
+            section_match = re.search(rf'(?is){section_name}\s*(.*?)(?=\s*(?:Experience|Education|Work|Employment|\Z))', text)
+            if section_match:
+                section_text = section_match.group(1).strip()
+                # Clean up the section text
+                section_text = re.sub(r'^[•\-\*]\s*', '', section_text, flags=re.MULTILINE)
+                section_text = re.sub(r'\n[•\-\*]\s*', '\n', section_text)
+                return [section_text]
+        
+        # Fall back to original pattern matching
         matches = re.finditer(pattern, text, re.MULTILINE | re.IGNORECASE | re.DOTALL)
         results = []
         for match in matches:
@@ -96,6 +108,90 @@ def extract_with_regex(text: str, pattern: str) -> list:
     except Exception as e:
         print(f"Error in regex extraction: {str(e)}")
         return []
+
+def extract_work_experience(text: str) -> list:
+    """Extract work experience robustly from messy PDF extraction results."""
+    import re
+    experiences = []
+    lines = text.splitlines()
+    lines = clean_ocr_years(lines)
+    lines = normalize_dates(lines)
+    n = len(lines)
+    i = 0
+    while i < n:
+        # Deteksi tanggal satu baris (09/2010 - 04/2011 atau 09 2010 - 04 2011)
+        date_line = re.match(r'\s*(\d{2})[ /-]+(\d{4})\s*[-–]+\s*(\d{2})[ /-]+(\d{4})', lines[i])
+        # Deteksi tanggal multi-baris (09 2010, -, 04 2011)
+        date_multiline = (
+            i+2 < n and
+            re.match(r'\s*(\d{2})\s*(\d{4})', lines[i]) and
+            re.match(r'\s*-\s*', lines[i+1]) and
+            re.match(r'\s*(\d{2})\s*(\d{4})', lines[i+2])
+        )
+        if date_line:
+            start_date = f"{date_line.group(1)}/{date_line.group(2)}"
+            end_date = f"{date_line.group(3)}/{date_line.group(4)}"
+            j = i + 1
+        elif date_multiline:
+            m1 = re.match(r'\s*(\d{2})\s*(\d{4})', lines[i])
+            m2 = re.match(r'\s*(\d{2})\s*(\d{4})', lines[i+2])
+            start_date = f"{m1.group(1)}/{m1.group(2)}"
+            end_date = f"{m2.group(1)}/{m2.group(2)}"
+            j = i + 3
+        else:
+            i += 1
+            continue
+        # Ambil blok sampai sebelum tanggal berikutnya atau Education
+        block = []
+        while j < n and not (
+            re.match(r'\s*(\d{2})[ /-]+(\d{4})\s*[-–]+\s*(\d{2})[ /-]+(\d{4})', lines[j]) or
+            (j+2 < n and re.match(r'\s*(\d{2})\s*(\d{4})', lines[j]) and re.match(r'\s*-\s*', lines[j+1]) and re.match(r'\s*(\d{2})\s*(\d{4})', lines[j+2])) or
+            re.match(r'\s*Education', lines[j], re.IGNORECASE)
+        ):
+            block.append(lines[j])
+            j += 1
+        # Bersihkan blok dari baris kosong/aneh
+        block = [b for b in block if b.strip() and not re.match(r'^[^\w]+$', b)]
+        # Parsing field: company, city, state, position, description
+        company = block[0].strip() if len(block) > 0 else ""
+        city, state = "", ""
+        position = ""
+        description_lines = []
+        # Cari city, state, position
+        for idx in range(1, len(block)):
+            # City, State biasanya dipisah koma
+            if ',' in block[idx]:
+                parts = block[idx].split(',')
+                city = parts[0].strip()
+                state = parts[1].strip() if len(parts) > 1 else ""
+                # Posisi biasanya di baris berikutnya
+                if idx+1 < len(block):
+                    position = block[idx+1].strip()
+                    description_lines = block[idx+2:]
+                else:
+                    position = ""
+                    description_lines = []
+                break
+        else:
+            # fallback: jika tidak ketemu city, state
+            if len(block) > 1:
+                position = block[1].strip()
+                description_lines = block[2:]
+        description = '\n'.join(description_lines).strip()
+        experiences.append({
+            'date_range': f"{start_date} - {end_date}",
+            'company': company,
+            'city': city,
+            'state': state,
+            'position': position,
+            'description': description
+        })
+        i = j
+    print(f"\nWork Experience Extraction:")
+    print(f"Found {len(experiences)} work experiences")
+    if experiences:
+        print(f"Sample: {experiences[0]}")
+    return experiences
 
 def extract_all_info(text: str) -> dict:
     """Extract all information from CV text using regex patterns"""
@@ -178,100 +274,6 @@ def normalize_dates(lines):
         normalized.append(lines[i])
         i += 1
     return normalized
-
-def extract_work_experience(text: str) -> list:
-    """Extract work experience robustly from messy PDF extraction results."""
-    import re
-    experiences = []
-    
-    # First, find the Experience section
-    experience_section = re.search(r'(?is)(?:Experience|Work\s*Experience|Employment|Professional\s*Experience)\s*(.*?)(?=\s*Education|\Z)', text)
-    if not experience_section:
-        print("No Experience section found")
-        return experiences
-        
-    # Get the experience text
-    exp_text = experience_section.group(1)
-    print("\nExperience section found:")
-    print(exp_text[:500] + "...")
-    
-    # Split into lines and clean
-    lines = exp_text.splitlines()
-    lines = [line.strip() for line in lines if line.strip()]
-    lines = clean_ocr_years(lines)
-    
-    # Debug print
-    print("\nProcessing work experience...")
-    print("First few lines of experience section:")
-    for line in lines[:10]:
-        print(f"Line: '{line}'")
-    
-    i = 0
-    while i < len(lines):
-        # Look for date pattern (MM/YYYY - MM/YYYY)
-        date_match = re.match(r'(\d{2})[/-](\d{4})\s*[-–]+\s*(\d{2})[/-](\d{4})', lines[i])
-        if not date_match:
-            i += 1
-            continue
-            
-        # Extract date range
-        start_date = f"{date_match.group(1)}/{date_match.group(2)}"
-        end_date = f"{date_match.group(3)}/{date_match.group(4)}"
-        
-        # Debug print
-        print(f"\nFound date range: {start_date} - {end_date}")
-        
-        # Get the next line for company and position
-        if i + 1 < len(lines):
-            company_line = lines[i + 1].strip()
-            print(f"Company line: '{company_line}'")
-            
-            # Extract company, city, state, and position
-            company = "Company Name"  # Default
-            city = ""
-            state = ""
-            position = ""
-            
-            # Try to extract position from the line
-            position_match = re.search(r'(?:Food Prep Chef|Cook|Chef|Food Service Cook|Line Cook|Temp)', company_line, re.IGNORECASE)
-            if position_match:
-                position = position_match.group(0)
-            
-            # Get description lines
-            j = i + 2
-            description_lines = []
-            while j < len(lines) and not re.match(r'\d{2}[/-]\d{4}\s*[-–]+\s*\d{2}[/-]\d{4}', lines[j]):
-                if lines[j].strip():
-                    description_lines.append(lines[j].strip())
-                j += 1
-            
-            # Clean up description
-            description = '\n'.join(description_lines)
-            description = re.sub(r'^[•\-\*]\s*', '', description, flags=re.MULTILINE)
-            description = re.sub(r'\n[•\-\*]\s*', '\n', description)
-            
-            # Create experience entry
-            experience = {
-                'date_range': f"{start_date} - {end_date}",
-                'company': company,
-                'city': city,
-                'state': state,
-                'position': position,
-                'description': description
-            }
-            
-            # Debug print
-            print("\nExtracted experience:")
-            for key, value in experience.items():
-                print(f"{key}: {value}")
-            
-            experiences.append(experience)
-            i = j
-        else:
-            i += 1
-    
-    print(f"\nTotal work experiences found: {len(experiences)}")
-    return experiences
 
 def extract_education(text: str) -> list:
     """Extract education details including dates, degrees, and institutions"""
