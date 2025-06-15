@@ -249,11 +249,12 @@ class CVAnalyzerApp:
     def show_error(self, error_message):
         messagebox.showerror("Analysis Error", f"An error occurred: {error_message}")
     
-    def calculate_match_score(self, text: str, keywords: List[str]) -> Tuple[float, float, float]:
+    def calculate_match_score(self, text: str, keywords: List[str]) -> Tuple[float, Dict[str, int], float, float]:
         """Calculate match score using selected pattern matching algorithm and fuzzy matching
-        Returns: (total_score, exact_time, fuzzy_time)"""
+        Returns: (total_score, keyword_matches, exact_time, fuzzy_time)"""
         text = text.lower()
         total_score = 0
+        keyword_matches = {k.lower(): 0 for k in keywords}  # Track matches per keyword
         exact_matches = set()  # Track which keywords had exact matches
         
         # Get selected algorithm
@@ -274,6 +275,7 @@ class CVAnalyzerApp:
             
             if matches:  # If exact matches found
                 exact_matches.add(keyword)
+                keyword_matches[keyword] = len(matches)
                 print(f"Found {len(matches)} matches for '{keyword}' using {selected_algo}")
                 # Calculate score based on number of matches and context
                 for match_pos in matches:
@@ -296,6 +298,7 @@ class CVAnalyzerApp:
             fuzzy_start_time = time.time()
             fuzzy_results = fuzzy_search_all(text, unmatched_keywords, threshold=0.8)
             for keyword, matches in fuzzy_results.items():
+                keyword_matches[keyword] = len(matches)
                 for match_pos, similarity in matches:
                     # Get context around the match
                     context_start = max(0, match_pos - 50)
@@ -308,7 +311,7 @@ class CVAnalyzerApp:
                     total_score += score
             fuzzy_time = time.time() - fuzzy_start_time
         
-        return total_score, exact_time, fuzzy_time
+        return total_score, keyword_matches, exact_time, fuzzy_time
 
     def search_keywords(self):
         if not self.current_file_paths:
@@ -339,11 +342,11 @@ class CVAnalyzerApp:
             if file_path in self.analysis_results:
                 results = self.analysis_results[file_path]
                 if 'text' in results:
-                    score, exact_time, fuzzy_time = self.calculate_match_score(results['text'], keywords)
+                    score, keyword_matches, exact_time, fuzzy_time = self.calculate_match_score(results['text'], keywords)
                     total_exact_time += exact_time
                     total_fuzzy_time += fuzzy_time
                     if score > 0:
-                        file_scores.append((file_path, score))
+                        file_scores.append((file_path, score, keyword_matches))
         
         # Sort by score and take top matches
         file_scores.sort(key=lambda x: x[1], reverse=True)
@@ -382,8 +385,8 @@ class CVAnalyzerApp:
                 fuzzy_time_label.pack(side="left")
             
             # Create cards for each match
-            for file_path, score in top_matches:
-                card = self.create_match_card(cards_frame, file_path, score)
+            for file_path, score, keyword_matches in top_matches:
+                card = self.create_match_card(cards_frame, file_path, score, keyword_matches)
                 card.pack(fill="x", pady=10)
         else:
             # Show no matches message
@@ -395,7 +398,7 @@ class CVAnalyzerApp:
             )
             message_label.place(relx=0.5, rely=0.5, anchor="center")
     
-    def create_match_card(self, parent, file_path: str, score: float) -> ctk.CTkFrame:
+    def create_match_card(self, parent, file_path: str, score: float, keyword_matches: Dict[str, int]) -> ctk.CTkFrame:
         """Create a card for displaying a match"""
         card = ctk.CTkFrame(parent, corner_radius=10, fg_color=("#2B2B2B", "#1A1A1A"))
         
@@ -418,13 +421,57 @@ class CVAnalyzerApp:
         )
         name_label.pack(side="left")
         
+        # Score and matches info
+        info_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        info_frame.pack(side="right")
+        
         score_label = ctk.CTkLabel(
-            header_frame,
+            info_frame,
             text=f"Match Score: {score:.2f}",
             font=ctk.CTkFont(size=14),
             text_color="#4A90E2"
         )
-        score_label.pack(side="right")
+        score_label.pack(side="top", pady=(0, 5))
+        
+        # Total matches
+        total_matches = sum(keyword_matches.values())
+        matches_label = ctk.CTkLabel(
+            info_frame,
+            text=f"Total Matches: {total_matches}",
+            font=ctk.CTkFont(size=14),
+            text_color="#4A90E2"
+        )
+        matches_label.pack(side="top", pady=(0, 5))
+        
+        # Detailed matches per keyword
+        matches_detail = ctk.CTkFrame(content_frame, fg_color="transparent")
+        matches_detail.pack(fill="x", pady=(0, 10))
+        
+        ctk.CTkLabel(
+            matches_detail,
+            text="Matches per keyword:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#A0A0A0"
+        ).pack(anchor="w", pady=(0, 5))
+        
+        for keyword, count in keyword_matches.items():
+            if count > 0:  # Only show keywords that have matches
+                match_row = ctk.CTkFrame(matches_detail, fg_color="transparent")
+                match_row.pack(fill="x", pady=2)
+                
+                ctk.CTkLabel(
+                    match_row,
+                    text=f"• {keyword.capitalize()}:",
+                    font=ctk.CTkFont(size=12),
+                    text_color="#A0A0A0"
+                ).pack(side="left")
+                
+                ctk.CTkLabel(
+                    match_row,
+                    text=f"{count} matches",
+                    font=ctk.CTkFont(size=12),
+                    text_color="#4A90E2"
+                ).pack(side="left", padx=(5, 0))
         
         # Buttons
         buttons_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
