@@ -1,67 +1,94 @@
-import re
 import PyPDF2
-# Pastikan Anda mengimpor info_extractor dari direktori yang sama
-from .info_extractor import extract_all_info
+from .regex import patterns, extract_with_regex, extract_work_experience, extract_education, clean_text
+
+# Tambahan untuk OCR
+import pytesseract
+from pdf2image import convert_from_path
+from PIL import Image
+import tempfile
+import os
 
 class CVExtractor:
-    def _extract_text_for_regex(self, pdf_path: str) -> str:
-        """
-        Mengekstrak teks dari PDF dengan mempertahankan format baris baru.
-        Output ini ideal untuk ekstraksi berbasis pola (Regex).
-        """
+    def extract_text_from_pdf(self, pdf_path: str) -> str:
+        """Extract text from PDF file, fallback to OCR if needed."""
         try:
+            print(f"Opening PDF file: {pdf_path}")
             with open(pdf_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
                 text = ''
-                for page in pdf_reader.pages:
+                print(f"Number of pages: {len(pdf_reader.pages)}")
+                for i, page in enumerate(pdf_reader.pages):
                     page_text = page.extract_text()
                     if page_text:
+                        print(f"Page {i+1} text length: {len(page_text)}")
                         text += page_text + '\n'
-                
+                # Clean the text
+                text = clean_text(text)
+                print(f"Total extracted text length: {len(text)}")
+                # Jika hasil terlalu sedikit, fallback ke OCR
+                if len(text.strip()) < 100 or not any(str(y) in text for y in range(1990, 2030)):
+                    print("PyPDF2 extraction too short or no years found, using OCR fallback...")
+                    text = self.ocr_pdf(pdf_path)
                 if not text.strip():
-                    print("Peringatan: Tidak ada teks yang diekstrak dari PDF.")
+                    print("Warning: No text was extracted from the PDF")
                 return text
         except Exception as e:
-            print(f"Error dalam _extract_text_for_regex: {str(e)}")
-            raise
+            print(f"Error in extract_text_from_pdf: {str(e)}")
+            raise Exception(f"Error reading PDF: {str(e)}")
 
-    def _create_text_for_pattern_matching(self, raw_text: str) -> str:
-        """
-        Mengonversi teks mentah menjadi format yang bersih untuk pattern matching (KMP/BM).
-        - Mengubah ke huruf kecil
-        - Menghapus karakter non-alfanumerik (kecuali spasi)
-        - Mengganti spasi ganda/baris baru dengan satu spasi
-        """
-        # 1. Ubah ke huruf kecil
-        text = raw_text.lower()
-        # 2. Ganti semua jenis whitespace (baris baru, tab, spasi ganda) dengan satu spasi
-        text = re.sub(r'\s+', ' ', text)
-        # 3. Hapus karakter selain huruf, angka, dan spasi
-        text = re.sub(r'[^a-z0-9\s]', '', text)
-        return text.strip()
+    def ocr_pdf(self, pdf_path: str) -> str:
+        """Extract text from PDF using OCR (pytesseract + pdf2image)."""
+        print("Starting OCR extraction...")
+        text = ''
+        with tempfile.TemporaryDirectory() as path:
+            images = convert_from_path(pdf_path, output_folder=path)
+            for i, image in enumerate(images):
+                ocr_result = pytesseract.image_to_string(image, lang='eng')
+                print(f"OCR page {i+1} text length: {len(ocr_result)}")
+                text += ocr_result + '\n'
+        text = clean_text(text)
+        print(f"Total OCR extracted text length: {len(text)}")
+        return text
 
     def analyze_cv(self, pdf_path: str) -> dict:
-        """
-        Metode utama untuk menganalisis CV.
-        Menghasilkan DUA jenis teks dan informasi terstruktur.
-        """
+        """Main method to analyze CV using regex patterns"""
         try:
-            # Langkah 1: Ekstrak teks dengan format asli untuk Regex
-            text_for_regex = self._extract_text_for_regex(pdf_path)
-            
-            # Langkah 2: Buat versi teks yang bersih untuk Pattern Matching
-            text_for_pattern_matching = self._create_text_for_pattern_matching(text_for_regex)
-            
-            # Langkah 3: Ekstrak info terstruktur menggunakan teks yang formatnya bagus
-            structured_info = extract_all_info(text_for_regex)
-            
-            # Langkah 4: Kembalikan semua hasil dalam satu dictionary
-            analysis_result = {
-                'text_for_regex': text_for_regex,
-                'text_for_pattern_matching': text_for_pattern_matching,
-                **structured_info  # Menambahkan 'name', 'email', dll.
+            print(f"Starting CV analysis for: {pdf_path}")
+            text = self.extract_text_from_pdf(pdf_path)
+            print(f"Extracted text sample: {text[:200]}...")
+            # Extract information using regex patterns
+            summary = extract_with_regex(text, patterns['summary'])
+            skills = extract_with_regex(text, patterns['skills'])
+            work_exp = extract_work_experience(text)
+            education = extract_education(text)
+            # Log extraction results
+            print("\nExtraction Results:")
+            print(f"Summary found: {len(summary)} items")
+            print(f"Skills found: {len(skills)} items")
+            print(f"Work experience found: {len(work_exp)} items")
+            print(f"Education found: {len(education)} items")
+            # Format results for display
+            result = {
+                'text': text,
+                'summary': summary,
+                'skills': skills,
+                'work_experience': [
+                    f"Date Range: {job['date_range']}\n"
+                    f"Company: {job['company']}\n"
+                    f"Location: {job['city']}, {job['state']}\n"
+                    f"Position: {job['position']}\n"
+                    f"Description:\n{job['description']}\n"
+                    f"{'='*50}\n"
+                    for job in work_exp
+                ],
+                'education': [
+                    f"Year: {edu['year']}\n"
+                    f"Degree: {edu['degree']}\n"
+                    f"Institution: {edu['institution']}"
+                    for edu in education
+                ]
             }
-            return analysis_result
+            return result
         except Exception as e:
-            print(f"Error dalam analyze_cv: {str(e)}")
-            return {'error': str(e)}
+            print(f"Error in analyze_cv: {str(e)}")
+            return {'error': str(e)} 
