@@ -1,5 +1,21 @@
-# src/query_service.py
 from src.database_connector.db import connect_db
+
+def save_raw_and_extracted(detail_id, raw, overview, skills, exp, edu):
+    conn = connect_db()
+    cur  = conn.cursor()
+    sql = """
+    UPDATE ApplicationDetail
+       SET raw_text   = %s,
+           overview   = %s,
+           skills     = %s,
+           experience = %s,
+           education  = %s
+     WHERE detail_id = %s
+    """
+    cur.execute(sql, (raw, overview, skills, exp, edu, detail_id))
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def insert_applicant(first_name: str,
                      last_name: str,
