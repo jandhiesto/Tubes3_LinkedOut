@@ -1,94 +1,56 @@
-import PyPDF2
-from .regex import patterns, extract_with_regex, extract_work_experience, extract_education, clean_text
-
-# Tambahan untuk OCR
-import pytesseract
-from pdf2image import convert_from_path
-from PIL import Image
-import tempfile
-import os
+import fitz  # PyMuPDF
+import re
 
 class CVExtractor:
-    def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract text from PDF file, fallback to OCR if needed."""
-        try:
-            print(f"Opening PDF file: {pdf_path}")
-            with open(pdf_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                text = ''
-                print(f"Number of pages: {len(pdf_reader.pages)}")
-                for i, page in enumerate(pdf_reader.pages):
-                    page_text = page.extract_text()
-                    if page_text:
-                        print(f"Page {i+1} text length: {len(page_text)}")
-                        text += page_text + '\n'
-                # Clean the text
-                text = clean_text(text)
-                print(f"Total extracted text length: {len(text)}")
-                # Jika hasil terlalu sedikit, fallback ke OCR
-                if len(text.strip()) < 100 or not any(str(y) in text for y in range(1990, 2030)):
-                    print("PyPDF2 extraction too short or no years found, using OCR fallback...")
-                    text = self.ocr_pdf(pdf_path)
-                if not text.strip():
-                    print("Warning: No text was extracted from the PDF")
-                return text
-        except Exception as e:
-            print(f"Error in extract_text_from_pdf: {str(e)}")
-            raise Exception(f"Error reading PDF: {str(e)}")
+    def __init__(self, file_path):
+        self.file_path = file_path
+        self._raw_content = ""
+        self._processed_content = ""
+    
+    def retrieve_raw_text(self):
+        """Return the raw text content from the PDF"""
+        if not self._raw_content:
+            self._extract_text_from_pdf()
+        return self._raw_content
+    
+    def retrieve_cleaned_text(self):
+        """Return the processed text as a continuous string"""
+        if not self._processed_content:
+            self._convert_to_continuous_text()
+        return self._processed_content
 
-    def ocr_pdf(self, pdf_path: str) -> str:
-        """Extract text from PDF using OCR (pytesseract + pdf2image)."""
-        print("Starting OCR extraction...")
-        text = ''
-        with tempfile.TemporaryDirectory() as path:
-            images = convert_from_path(pdf_path, output_folder=path)
-            for i, image in enumerate(images):
-                ocr_result = pytesseract.image_to_string(image, lang='eng')
-                print(f"OCR page {i+1} text length: {len(ocr_result)}")
-                text += ocr_result + '\n'
-        text = clean_text(text)
-        print(f"Total OCR extracted text length: {len(text)}")
-        return text
+    def get_file_path(self):
+        """Return the current PDF file path"""
+        return self.file_path
 
-    def analyze_cv(self, pdf_path: str) -> dict:
-        """Main method to analyze CV using regex patterns"""
-        try:
-            print(f"Starting CV analysis for: {pdf_path}")
-            text = self.extract_text_from_pdf(pdf_path)
-            print(f"Extracted text sample: {text[:200]}...")
-            # Extract information using regex patterns
-            summary = extract_with_regex(text, patterns['summary'])
-            skills = extract_with_regex(text, patterns['skills'])
-            work_exp = extract_work_experience(text)
-            education = extract_education(text)
-            # Log extraction results
-            print("\nExtraction Results:")
-            print(f"Summary found: {len(summary)} items")
-            print(f"Skills found: {len(skills)} items")
-            print(f"Work experience found: {len(work_exp)} items")
-            print(f"Education found: {len(education)} items")
-            # Format results for display
-            result = {
-                'text': text,
-                'summary': summary,
-                'skills': skills,
-                'work_experience': [
-                    f"Date Range: {job['date_range']}\n"
-                    f"Company: {job['company']}\n"
-                    f"Location: {job['city']}, {job['state']}\n"
-                    f"Position: {job['position']}\n"
-                    f"Description:\n{job['description']}\n"
-                    f"{'='*50}\n"
-                    for job in work_exp
-                ],
-                'education': [
-                    f"Year: {edu['year']}\n"
-                    f"Degree: {edu['degree']}\n"
-                    f"Institution: {edu['institution']}"
-                    for edu in education
-                ]
-            }
-            return result
-        except Exception as e:
-            print(f"Error in analyze_cv: {str(e)}")
-            return {'error': str(e)} 
+    def update_file_path(self, path):
+        """Update the PDF file path and reset cached content"""
+        self.file_path = path
+        self._raw_content = ""
+        self._processed_content = ""
+
+    def _extract_text_from_pdf(self):
+        """Extract text content from all PDF pages"""
+        document = fitz.open(self.file_path)
+        text_content = ""
+        for page_num in range(len(document)):
+            page = document[page_num]
+            text_content += page.get_text()
+        document.close()
+        self._raw_content = text_content
+
+    def _convert_to_continuous_text(self):
+        """Process text to lowercase continuous string without punctuation"""
+        if not self._raw_content:
+            self._extract_text_from_pdf()
+        
+        # Strip punctuation marks using regex
+        no_punct_text = re.sub(r'[^\w\s]', '', self._raw_content)
+        # Normalize whitespace and convert to lowercase
+        normalized_text = re.sub(r'\s+', ' ', no_punct_text).lower().strip()
+        self._processed_content = normalized_text
+
+    def process(self):
+        """Execute the complete text extraction and processing workflow"""
+        self._extract_text_from_pdf()
+        self._convert_to_continuous_text()
