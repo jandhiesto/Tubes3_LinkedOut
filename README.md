@@ -24,9 +24,28 @@ Algoritma Boyer-Moore adalah algoritma pencocokan string lain yang sangat efisie
 ``` 
 Menjadi Password SQL anda
 
-3. 
+3. Buat Virtual Environment 
+```bash
+    python -m venv venv
+``` 
+4. Aktifkan Virtual Environment
+```bash
+    source venv/bin/activate
+``` 
+5. Install requirment
+```bash
+    pip install -r requirements.txt
+``` 
 
+5. Jalankan init_db sekali saja
+```bash
+    python -m src.init_db
+``` 
 
+6. Jalankan jalankan main
+```bash
+    python -m src.main
+``` 
 
 ## Author
 - Boye Mangaratua Ginting (13523127)
