@@ -1,10 +1,11 @@
+# pattern/matching.py
+
 def kmp_search(text, pattern):
     """
     Melakukan pencarian string menggunakan algoritma Knuth-Morris-Pratt.
     Mengembalikan list berisi indeks awal dari semua kemunculan pattern.
     """
     def compute_lps(pattern):
-        # Longest Proper Prefix which is also Suffix
         lps = [0] * len(pattern)
         length = 0
         i = 1
@@ -24,10 +25,12 @@ def kmp_search(text, pattern):
     if not pattern or not text:
         return []
 
+    pattern = pattern.lower()
+    text = text.lower()
     lps = compute_lps(pattern)
     matches = []
-    i = 0  # pointer untuk text
-    j = 0  # pointer untuk pattern
+    i = 0
+    j = 0
     while i < len(text):
         if pattern[j] == text[i]:
             i += 1
@@ -46,48 +49,19 @@ def kmp_search(text, pattern):
 
 def boyer_moore_search(text, pattern):
     """
-    Melakukan pencarian string menggunakan algoritma Boyer-Moore
-    dengan Bad Character Heuristic dan Good Suffix Heuristic.
+    Melakukan pencarian string menggunakan algoritma Boyer-Moore.
     Mengembalikan list berisi indeks awal dari semua kemunculan pattern.
     """
+    pattern = pattern.lower()
+    text = text.lower()
     m = len(pattern)
     n = len(text)
-    if m == 0:
-        return []
-    if n < m:
-        return []
+    if m == 0: return []
+    if n < m: return []
 
     matches = []
+    bad_char = {pattern[i]: i for i in range(m)}
 
-    # --- Preprocessing untuk Bad Character Heuristic ---
-    bad_char = {}
-    for i in range(m):
-        bad_char[pattern[i]] = i
-
-    # --- Preprocessing untuk Good Suffix Heuristic ---
-    s = [0] * (m + 1)
-    f = [0] * (m + 1)
-    
-    i = m
-    j = m + 1
-    f[i] = j
-    while i > 0:
-        while j <= m and pattern[i - 1] != pattern[j - 1]:
-            if s[j] == 0:
-                s[j] = j - i
-            j = f[j]
-        i -= 1
-        j -= 1
-        f[i] = j
-    
-    j = f[0]
-    for i in range(m + 1):
-        if s[i] == 0:
-            s[i] = j
-        if i == j:
-            j = f[j]
-
-    # --- Proses Pencarian ---
     shift = 0
     while shift <= n - m:
         j = m - 1
@@ -96,14 +70,34 @@ def boyer_moore_search(text, pattern):
         
         if j < 0:
             matches.append(shift)
-            # Geser berdasarkan Good Suffix Rule untuk menemukan kemunculan berikutnya
-            shift += s[0]
+            shift += (m - bad_char.get(text[shift + m], -1) if shift + m < n else 1)
         else:
-            # Geser berdasarkan nilai maksimum dari Bad Character dan Good Suffix
-            char_text = text[shift + j]
-            bad_char_shift = j - bad_char.get(char_text, -1)
-            good_suffix_shift = s[j + 1]
-            
-            shift += max(bad_char_shift, good_suffix_shift)
+            shift += max(1, j - bad_char.get(text[shift + j], -1))
             
     return matches
+
+
+def levenshtein_distance(s1, s2):
+    """
+    Menghitung Levenshtein distance antara dua string.
+    """
+    s1 = s1.lower()
+    s2 = s2.lower()
+    
+    if len(s1) < len(s2):
+        return levenshtein_distance(s2, s1)
+
+    if len(s2) == 0:
+        return len(s1)
+
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    
+    return previous_row[-1]

@@ -1,21 +1,32 @@
+# init_db.py
 import mysql.connector
-from src.database_connector.db import connect_db
+from database_connector.db import connect_db
 
 def init_db():
     conn = connect_db()
     cursor = conn.cursor()
 
+    # Hapus tabel jika ada untuk memastikan skema yang bersih (opsional, baik untuk development)
+    cursor.execute("DROP TABLE IF EXISTS ApplicationDetail")
+    cursor.execute("DROP TABLE IF EXISTS ApplicantProfile")
+
+    # Membuat tabel ApplicantProfile yang lebih lengkap
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS ApplicantProfile (
         applicant_id INT NOT NULL PRIMARY KEY AUTO_INCREMENT,
-        first_name VARCHAR(50),
-        last_name VARCHAR(50),
-        date_of_birth DATE,
-        address VARCHAR(255),
-        phone_number VARCHAR(20)
+        first_name VARCHAR(100),
+        last_name VARCHAR(100),
+        email VARCHAR(255),
+        phone_number VARCHAR(50),
+        summary TEXT,
+        skills TEXT,
+        experience TEXT,
+        education TEXT
     )
     """)
+    print("✅ Table 'ApplicantProfile' created successfully.")
 
+    # Membuat tabel ApplicationDetail
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS ApplicationDetail (
         detail_id INT NOT NULL PRIMARY KEY AUTO_INCREMENT,
@@ -26,11 +37,12 @@ def init_db():
             ON DELETE CASCADE
     )
     """)
+    print("✅ Table 'ApplicationDetail' created successfully.")
 
     conn.commit()
     cursor.close()
     conn.close()
-    print("✅ Database berhasil diinisialisasi.")
+    print("✅ Database successfully initialized.")
 
 if __name__ == "__main__":
     init_db()
