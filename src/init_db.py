@@ -1,7 +1,6 @@
 import os
 import mysql.connector
 from dotenv import load_dotenv, find_dotenv
-from src.database_connector.db import connect_db
 
 load_dotenv(find_dotenv(), override=True)
 
@@ -30,7 +29,17 @@ def create_database():
 def run_sql_file(path: str):
     create_database()
 
-    conn = connect_db()
+    # Create database config
+    db_config = {
+        'host': os.getenv('DB_HOST'),
+        'user': os.getenv('DB_USER'),
+        'password': os.getenv('DB_PASSWORD'),
+        'database': os.getenv('DB_NAME')
+    }
+
+    # Import here to avoid circular import
+    from database_connector.db import connect_db
+    conn = connect_db(db_config)
     cursor = conn.cursor()
     print(f"[DEBUG] Menjalankan seeding SQL: {path}")
     with open(path, 'r', encoding='utf-8') as f:
