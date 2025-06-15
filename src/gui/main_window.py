@@ -5,13 +5,12 @@ import os
 import sys
 import threading
 from typing import Dict, List
-import re
 
-# Tambahkan path ke direktori induk agar bisa mengimpor dari folder lain
+# Add parent directory to path to import from other folders
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from extract.cv_extractor import CVExtractor
-from pattern.matching import kmp_search, boyer_moore_search
+from extract.regex import parse_cv_sections
 
 class CVAnalyzerApp:
     def __init__(self):
@@ -23,11 +22,9 @@ class CVAnalyzerApp:
         self.root.geometry("1400x800")
         self.root.minsize(1200, 700)
         
-        # --- Inisialisasi Properti Kelas ---
-        self.cv_extractor = CVExtractor()
+        # Initialize class properties
         self.current_file_paths: List[str] = []
         self.analysis_results: Dict[str, dict] = {}
-        self.current_algorithm = "KMP"
         
         self.setup_ui()
         
@@ -93,7 +90,7 @@ class CVAnalyzerApp:
         columns = [
             ("Summary", "summary"),
             ("Skills", "skills"),
-            ("Experience", "work_experience"),
+            ("Experience", "experience"),
             ("Education", "education")
         ]
         
@@ -136,10 +133,30 @@ class CVAnalyzerApp:
     def analyze_cvs(self):
         try:
             for file_path in self.current_file_paths:
-                results = self.cv_extractor.analyze_cv(file_path)
+                print(f"\nProcessing file: {file_path}")
+                
+                # Extract text using CVExtractor
+                cv_extractor = CVExtractor(file_path)
+                cv_extractor.process()
+                raw_text = cv_extractor.retrieve_raw_text()
+                print("\nExtracted text sample:")
+                print(raw_text[:500] + "...")
+                
+                # Extract sections using regex
+                sections = parse_cv_sections(raw_text)
+                
+                # Store results
+                results = {
+                    'summary': sections['summary'],
+                    'skills': sections['skills'],
+                    'experience': sections['experience'],
+                    'education': sections['education'],
+                    'text': raw_text  # Keep raw text for keyword search
+                }
                 self.analysis_results[file_path] = results
                 self.root.after(0, self.update_file_status, file_path, "✓")
         except Exception as e:
+            print(f"Error in analyze_cvs: {str(e)}")
             self.root.after(0, self.show_error, str(e))
         finally:
             self.root.after(0, self.reset_upload_button)
@@ -194,58 +211,11 @@ class CVAnalyzerApp:
             pass  # Ignore if no text is selected
     
     def display_results(self, results):
-        if 'error' in results:
-            for textbox in self.info_textboxes.values():
-                textbox.configure(state="normal")
-                textbox.delete("1.0", "end")
-                textbox.insert("1.0", f"Error: {results['error']}")
-                textbox.configure(state="disabled")
-            return
-
-        # Display Summary
-        self.info_textboxes['summary'].configure(state="normal")
-        self.info_textboxes['summary'].delete("1.0", "end")
-        summary_text = results.get('summary', 'N/A')
-        if isinstance(summary_text, list):
-            summary_text = summary_text[0] if summary_text else 'N/A'
-        self.info_textboxes['summary'].insert("1.0", summary_text)
-        self.info_textboxes['summary'].configure(state="disabled")
-
-        # Display Skills
-        self.info_textboxes['skills'].configure(state="normal")
-        self.info_textboxes['skills'].delete("1.0", "end")
-        skills_text = results.get('skills', 'N/A')
-        if isinstance(skills_text, list):
-            skills_text = skills_text[0] if skills_text else 'N/A'
-        self.info_textboxes['skills'].insert("1.0", skills_text)
-        self.info_textboxes['skills'].configure(state="disabled")
-
-        # Display Work Experience
-        self.info_textboxes['work_experience'].configure(state="normal")
-        self.info_textboxes['work_experience'].delete("1.0", "end")
-        experience_text = ""
-        for exp in results.get('work_experience', []):
-            experience_text += f"{exp['date_range']}\n"
-            experience_text += f"{exp['position']} at {exp['company']}\n"
-            if exp['city'] or exp['state']:
-                experience_text += f"{exp['city']}, {exp['state']}\n"
-            experience_text += f"{exp['description']}\n\n"
-        self.info_textboxes['work_experience'].insert("1.0", experience_text or 'N/A')
-        self.info_textboxes['work_experience'].configure(state="disabled")
-
-        # Display Education
-        self.info_textboxes['education'].configure(state="normal")
-        self.info_textboxes['education'].delete("1.0", "end")
-        education_text = ""
-        for edu in results.get('education', []):
-            if isinstance(edu, dict):  # Check if edu is a dictionary
-                education_text += f"{edu.get('year', 'N/A')}\n"
-                education_text += f"{edu.get('degree', 'N/A')}\n"
-                education_text += f"{edu.get('institution', 'N/A')}\n\n"
-            else:  # If edu is a string or other format
-                education_text += f"{edu}\n\n"
-        self.info_textboxes['education'].insert("1.0", education_text or 'N/A')
-        self.info_textboxes['education'].configure(state="disabled")
+        for key in self.info_textboxes:
+            self.info_textboxes[key].configure(state="normal")
+            self.info_textboxes[key].delete("1.0", "end")
+            self.info_textboxes[key].insert("1.0", results.get(key, 'N/A'))
+            self.info_textboxes[key].configure(state="disabled")
 
     def search_keywords(self):
         if not self.current_file_paths:
@@ -267,12 +237,12 @@ class CVAnalyzerApp:
             if file_path in self.analysis_results:
                 results = self.analysis_results[file_path]
                 if 'text' in results:
-                    text = results['text']
+                    text = results['text'].lower()  # Convert to lowercase once
                     total_matches = 0
                     for keyword in keywords:
                         # Use case-insensitive search
-                        matches = re.finditer(keyword.lower(), text.lower())
-                        total_matches += len(list(matches))
+                        matches = text.count(keyword.lower())
+                        total_matches += matches
                     
                     if total_matches > 0:
                         file_matches.append((os.path.basename(file_path), total_matches, file_path))
