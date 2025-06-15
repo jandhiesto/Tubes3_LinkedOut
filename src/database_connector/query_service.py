@@ -1,58 +1,80 @@
-from .db import connect_db
+# src/query_service.py
+from src.database_connector.db import connect_db
 
-def insert_applicant(first_name, last_name, dob, address, phone):
+def insert_applicant(first_name: str,
+                     last_name: str,
+                     dob: str,
+                     address: str,
+                     phone: str) -> int:
+    """
+    Masukkan data ApplicantProfile baru,
+    return applicant_id (auto increment).
+    """
     conn = connect_db()
     cursor = conn.cursor()
 
-    query = """
-        INSERT INTO ApplicantProfile (first_name, last_name, date_of_birth, address, phone_number)
+    sql = """
+        INSERT INTO ApplicantProfile
+            (first_name, last_name, date_of_birth, address, phone_number)
         VALUES (%s, %s, %s, %s, %s)
     """
-    cursor.execute(query, (first_name, last_name, dob, address, phone))
-    applicant_id = cursor.lastrowid
+    cursor.execute(sql, (first_name, last_name, dob, address, phone))
+    new_id = cursor.lastrowid
 
     conn.commit()
     cursor.close()
     conn.close()
+    return new_id
 
-    return applicant_id
-
-def insert_application_detail(applicant_id, role, cv_path):
+def insert_application_detail(applicant_id: int,
+                              role: str,
+                              cv_path: str) -> None:
+    """
+    Masukkan data ApplicationDetail untuk applicant_id tertentu.
+    """
     conn = connect_db()
     cursor = conn.cursor()
 
-    query = """
-        INSERT INTO ApplicationDetail (applicant_id, application_role, cv_path)
+    sql = """
+        INSERT INTO ApplicationDetail
+            (applicant_id, application_role, cv_path)
         VALUES (%s, %s, %s)
     """
-    cursor.execute(query, (applicant_id, role, cv_path))
+    cursor.execute(sql, (applicant_id, role, cv_path))
 
     conn.commit()
     cursor.close()
     conn.close()
 
-def get_all_applicants():
+def get_all_applicants() -> list[dict]:
+    """
+    Ambil semua baris dari ApplicantProfile
+    sebagai list of dict.
+    """
     conn = connect_db()
     cursor = conn.cursor(dictionary=True)
 
     cursor.execute("SELECT * FROM ApplicantProfile")
-    result = cursor.fetchall()
+    rows = cursor.fetchall()
 
     cursor.close()
     conn.close()
-    return result
+    return rows
 
-def get_application_detail(applicant_id):
+def get_application_detail(applicant_id: int) -> list[dict]:
+    """
+    Ambil semua ApplicationDetail untuk applicant_id tertentu.
+    """
     conn = connect_db()
     cursor = conn.cursor(dictionary=True)
 
     cursor.execute("""
-        SELECT * FROM ApplicationDetail
-        WHERE applicant_id = %s
+        SELECT *
+          FROM ApplicationDetail
+         WHERE applicant_id = %s
     """, (applicant_id,))
-    
-    result = cursor.fetchall()
+    rows = cursor.fetchall()
 
     cursor.close()
     conn.close()
-    return result
+    return rows

@@ -6,6 +6,8 @@ setuptools>=65.5.1
 wheel>=0.38.4
 numpy>=1.21.0
 mysql-connector-python==9.3.0
+python-dotenv>=1.0.0
+python-Levenshtein>=0.20.0  
 pytesseract
 pdf2image
 --only-binary :all: 
